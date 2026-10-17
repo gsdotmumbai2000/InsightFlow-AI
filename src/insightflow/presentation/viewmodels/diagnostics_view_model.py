@@ -65,9 +65,28 @@ class DiagnosticsViewModel:
             ("Logging initialized", str(d.logging_initialized)),
             ("Secret store backend", d.secret_store_backend),
             ("Gmail", gmail_status),
-            ("AI providers", "Not configured"),
+            ("AI providers", self._ai_status()),
         )
         text = "\n".join(f"{k}: {v}" for k, v in rows).lower()
         secret_markers = ("token", "bearer ", "client_secret", "refresh_token")
         contains_secrets = any(marker in text for marker in secret_markers)
         return DiagnosticsViewState(rows=rows, contains_secret_values=contains_secrets)
+
+    def _ai_status(self) -> str:
+        """Local, in-memory AI status — never makes a network/AWS call.
+
+        Reads only the already-loaded ``AISettings`` (Phase 11); never
+        touches the provider/adapter. Deliberately does **not** report
+        ``ai_worker_handle.is_running`` (Phase 13 correction): in the
+        Desktop process this handle is always empty — the Desktop never
+        owns an ``AIWorker`` (see ``ProcessRole``) — so reporting "stopped"
+        from it would misreport a genuinely-running Background Agent.
+        ``AISettings`` is identical across both processes, so it is the
+        only thing that can be reported truthfully here.
+        """
+        ai_settings = self._use_cases.ai_settings
+        if not ai_settings.enabled:
+            return "Disabled"
+        if not ai_settings.is_configured:
+            return "Not configured"
+        return f"{ai_settings.provider} (enabled)"

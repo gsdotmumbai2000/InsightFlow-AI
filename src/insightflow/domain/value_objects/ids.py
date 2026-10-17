@@ -110,3 +110,19 @@ class StoryId:
     @classmethod
     def generate(cls) -> StoryId:
         return cls(_new_id())
+
+
+@dataclass(frozen=True, slots=True)
+class MonitoringStateId:
+    """Unique identifier for a MonitoringState."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "value", require_non_empty(self.value, "MonitoringStateId")
+        )
+
+    @classmethod
+    def generate(cls) -> MonitoringStateId:
+        return cls(_new_id())

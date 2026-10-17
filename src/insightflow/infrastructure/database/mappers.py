@@ -10,6 +10,7 @@ from insightflow.domain import (
     AIAnalysis,
     AIAnalysisId,
     AIAnalysisStatus,
+    AIOutputStyle,
     AIProfile,
     AIProfileId,
     Attachment,
@@ -23,6 +24,9 @@ from insightflow.domain import (
     IntelligenceEvent,
     MarketImpact,
     MarketImpactDirection,
+    MonitoringState,
+    MonitoringStateId,
+    MonitoringStatus,
     Notification,
     NotificationId,
     NotificationStatus,
@@ -176,10 +180,15 @@ def profile_to_rows(profile: AIProfile) -> tuple[dict[str, Any], dict[str, Any]]
         "version_number": profile.version,
         "system_prompt": profile.instructions,
         "output_schema_json": json_dumps(
-            {"schema_version": profile.output_schema_version}
+            {
+                "schema_version": profile.output_schema_version,
+                "output_style": profile.output_style.value,
+            }
         ),
         "model_preferences_json": None,
-        "created_at": datetime_to_db(profile.created_at),
+        # updated_at: equals created_at for a new profile, and is when this
+        # version was made for a revised one (see AIProfile.revise).
+        "created_at": datetime_to_db(profile.updated_at),
         "created_by": None,
         "is_active": 1,
     }
@@ -191,8 +200,15 @@ def profile_from_rows(profile_row: Any, version_row: Any) -> AIProfile:
         version_row["output_schema_json"], field_name="output_schema_json"
     )
     schema_version = "v1"
-    if isinstance(schema, dict) and schema.get("schema_version"):
-        schema_version = str(schema["schema_version"])
+    output_style = AIOutputStyle.ANALYSIS  # versions saved before styles existed
+    if isinstance(schema, dict):
+        if schema.get("schema_version"):
+            schema_version = str(schema["schema_version"])
+        if schema.get("output_style"):
+            try:
+                output_style = AIOutputStyle(str(schema["output_style"]))
+            except ValueError as exc:
+                raise DataMappingError("Unknown AI profile output_style.") from exc
     return AIProfile(
         id=AIProfileId(profile_row["id"]),
         name=profile_row["name"],
@@ -203,6 +219,7 @@ def profile_from_rows(profile_row: Any, version_row: Any) -> AIProfile:
         output_schema_version=schema_version,
         created_at=datetime_from_db(profile_row["created_at"]),  # type: ignore[arg-type]
         updated_at=datetime_from_db(profile_row["updated_at"]),  # type: ignore[arg-type]
+        output_style=output_style,
     )
 
 
@@ -300,6 +317,12 @@ def analysis_from_row(row: Any) -> AIAnalysis:
         priority=Priority(row["priority"]) if row["priority"] else None,
         latency_ms=row["latency_ms"],
         failure_reason=row["failure_reason"],
+        generated_content=(
+            # keys(): `in` on a sqlite3.Row tests values, not column names.
+            row["generated_content"]
+            if "generated_content" in row.keys()  # noqa: SIM118
+            else None
+        ),
     )
 
 
@@ -397,6 +420,44 @@ def story_to_row(story: Story) -> dict[str, Any]:
         "created_at": datetime_to_db(story.created_at),
         "updated_at": datetime_to_db(story.updated_at),
     }
+
+
+def monitoring_state_to_row(state: MonitoringState) -> dict[str, Any]:
+    return {
+        "id": state.id.value,
+        "account_id": state.account_id,
+        "provider": _enum_value(state.provider),
+        "pubsub_project_id": state.pubsub_project_id,
+        "pubsub_topic": state.pubsub_topic,
+        "pubsub_subscription": state.pubsub_subscription,
+        "current_history_id": state.current_history_id,
+        "watch_expiration": datetime_to_db(state.watch_expiration),
+        "status": _enum_value(state.status),
+        "last_notification_at": datetime_to_db(state.last_notification_at),
+        "last_sync_at": datetime_to_db(state.last_sync_at),
+        "last_error": state.last_error,
+        "created_at": datetime_to_db(state.created_at),
+        "updated_at": datetime_to_db(state.updated_at),
+    }
+
+
+def monitoring_state_from_row(row: Any) -> MonitoringState:
+    return MonitoringState(
+        id=MonitoringStateId(row["id"]),
+        account_id=row["account_id"],
+        provider=SourceType(row["provider"]),
+        pubsub_project_id=row["pubsub_project_id"],
+        pubsub_topic=row["pubsub_topic"],
+        pubsub_subscription=row["pubsub_subscription"],
+        current_history_id=row["current_history_id"],
+        watch_expiration=datetime_from_db(row["watch_expiration"]),
+        status=MonitoringStatus(row["status"]),
+        last_notification_at=datetime_from_db(row["last_notification_at"]),
+        last_sync_at=datetime_from_db(row["last_sync_at"]),
+        last_error=row["last_error"],
+        created_at=datetime_from_db(row["created_at"]),  # type: ignore[arg-type]
+        updated_at=datetime_from_db(row["updated_at"]),  # type: ignore[arg-type]
+    )
 
 
 def story_from_row(row: Any, event_ids: tuple[EventId, ...]) -> Story:

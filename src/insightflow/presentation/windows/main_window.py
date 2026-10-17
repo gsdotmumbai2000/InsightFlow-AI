@@ -156,15 +156,30 @@ class MainWindow(QMainWindow):
             status = self._use_cases.get_gmail_connection_status.execute()
         except Exception:
             self._status_gmail.setText("Gmail: Unavailable")
-            return
-        if status.status == "CONNECTED" and status.account is not None:
-            self._status_gmail.setText(f"Gmail: Connected ({status.account.email})")
-        elif status.status == "REAUTHENTICATION_REQUIRED":
-            self._status_gmail.setText("Gmail: Re-authentication required")
-        elif status.status == "CONNECTION_FAILED":
-            self._status_gmail.setText("Gmail: Connection failed")
         else:
-            self._status_gmail.setText("Gmail: Not connected")
+            if status.status == "CONNECTED" and status.account is not None:
+                self._status_gmail.setText(f"Gmail: Connected ({status.account.email})")
+            elif status.status == "REAUTHENTICATION_REQUIRED":
+                self._status_gmail.setText("Gmail: Re-authentication required")
+            elif status.status == "CONNECTION_FAILED":
+                self._status_gmail.setText("Gmail: Connection failed")
+            else:
+                self._status_gmail.setText("Gmail: Not connected")
+        self._refresh_ai_status()
+
+    def _refresh_ai_status(self) -> None:
+        if self._use_cases is None:
+            return
+        # Reports configuration truth (identical in the Desktop process and
+        # the Background Agent — see ProcessRole, Phase 13), not
+        # `ai_worker_handle.is_running`: the Desktop process never owns an
+        # AIWorker, so that handle is always empty here even when the
+        # Agent's worker is genuinely running. Checking it would just lie.
+        ai_settings = self._use_cases.ai_settings
+        if ai_settings.enabled:
+            self._status_ai.setText(f"AI: {ai_settings.provider} (enabled)")
+        else:
+            self._status_ai.setText("AI: Disabled")
 
     def _on_nav_changed(self, row: int) -> None:
         if row < 0:

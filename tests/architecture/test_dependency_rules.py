@@ -20,6 +20,8 @@ FORBIDDEN_DOMAIN_PREFIXES = (
     "google.cloud",
     "boto3",
     "botocore",
+    "windows_toasts",
+    "winrt",
     "sqlalchemy",
     "sqlite3",
 )
@@ -35,6 +37,8 @@ FORBIDDEN_APPLICATION_PREFIXES = (
     "boto3",
     "botocore",
     "openai",
+    "windows_toasts",
+    "winrt",
     "sqlalchemy",
     "sqlite3",
 )
@@ -46,6 +50,8 @@ FORBIDDEN_CONFIGURATION_PREFIXES = (
     "PySide6",
     "googleapiclient",
     "boto3",
+    "windows_toasts",
+    "winrt",
 )
 
 FORBIDDEN_PRESENTATION_PREFIXES = (
@@ -59,6 +65,8 @@ FORBIDDEN_PRESENTATION_PREFIXES = (
     "boto3",
     "botocore",
     "openai",
+    "windows_toasts",
+    "winrt",
 )
 
 
@@ -166,6 +174,94 @@ def test_non_gmail_layers_do_not_import_google_sdk() -> None:
     for layer in ("domain", "application", "presentation", "configuration"):
         violations = _violations(PACKAGE_ROOT / layer, forbidden)
         assert violations == [], "\n".join(violations)
+
+
+def test_infrastructure_ai_may_import_aws_sdk() -> None:
+    modules: set[str] = set()
+    for path in _iter_python_files(PACKAGE_ROOT / "infrastructure" / "ai"):
+        modules.update(_imported_modules(path))
+    assert any(
+        module == "boto3"
+        or module.startswith("boto3.")
+        or module.startswith("botocore")
+        for module in modules
+    )
+
+
+def test_non_ai_layers_do_not_import_aws_sdk() -> None:
+    forbidden = ("boto3", "botocore")
+    for layer in ("domain", "application", "presentation", "configuration"):
+        violations = _violations(PACKAGE_ROOT / layer, forbidden)
+        assert violations == [], "\n".join(violations)
+    other_infrastructure = [
+        path
+        for path in _iter_python_files(PACKAGE_ROOT / "infrastructure")
+        if "ai" not in path.relative_to(PACKAGE_ROOT / "infrastructure").parts[:1]
+    ]
+    findings: list[str] = []
+    for path in other_infrastructure:
+        for module in _imported_modules(path):
+            if module in forbidden or any(
+                module.startswith(f"{prefix}.") for prefix in forbidden
+            ):
+                findings.append(f"{path.relative_to(PACKAGE_ROOT)} imports {module}")
+    assert findings == [], "\n".join(findings)
+
+
+def test_infrastructure_notifications_may_import_windows_toasts() -> None:
+    modules: set[str] = set()
+    for path in _iter_python_files(PACKAGE_ROOT / "infrastructure" / "notifications"):
+        modules.update(_imported_modules(path))
+    assert any(
+        module == "windows_toasts" or module.startswith("windows_toasts.")
+        for module in modules
+    )
+
+
+def test_non_notifications_layers_do_not_import_windows_toasts() -> None:
+    forbidden = ("windows_toasts", "winrt")
+    for layer in ("domain", "application", "presentation", "configuration"):
+        violations = _violations(PACKAGE_ROOT / layer, forbidden)
+        assert violations == [], "\n".join(violations)
+    other_infrastructure = [
+        path
+        for path in _iter_python_files(PACKAGE_ROOT / "infrastructure")
+        if "notifications"
+        not in path.relative_to(PACKAGE_ROOT / "infrastructure").parts[:1]
+    ]
+    findings: list[str] = []
+    for path in other_infrastructure:
+        for module in _imported_modules(path):
+            if module in forbidden or any(
+                module.startswith(f"{prefix}.") for prefix in forbidden
+            ):
+                findings.append(f"{path.relative_to(PACKAGE_ROOT)} imports {module}")
+    assert findings == [], "\n".join(findings)
+
+
+def test_presentation_does_not_import_worker_implementations() -> None:
+    """Phase 13: the Desktop process must never be able to instantiate a
+    worker directly — only ``bootstrap.agent`` (via ``ProcessRole.AGENT``)
+    may. Importing the worker modules from ``presentation`` would make an
+    accidental direct instantiation possible; forbidding the import closes
+    that off structurally, not just by convention.
+    """
+    forbidden = (
+        "insightflow.application.services.gmail_monitoring_worker",
+        "insightflow.application.services.ai_worker",
+    )
+    violations = _violations(PACKAGE_ROOT / "presentation", forbidden)
+    assert violations == [], "\n".join(violations)
+
+
+def test_presentation_does_not_import_bootstrap_agent() -> None:
+    """Phase 13: the Desktop UI must never import the Background Agent
+    entry point — they are separate processes/entry points by design.
+    """
+    violations = _violations(
+        PACKAGE_ROOT / "presentation", ("insightflow.bootstrap.agent",)
+    )
+    assert violations == [], "\n".join(violations)
 
 
 def test_domain_only_imports_stdlib_or_domain() -> None:

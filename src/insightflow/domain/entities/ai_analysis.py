@@ -49,6 +49,8 @@ class AIAnalysis:
     latency_ms: int | None = None
     failure_reason: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    # Free text written for a CUSTOM_TEXT profile (e.g. a news script).
+    generated_content: str | None = None
 
     def __post_init__(self) -> None:
         self.provider = require_non_empty(self.provider, "provider")
@@ -76,6 +78,10 @@ class AIAnalysis:
         self.entities = tuple(
             require_non_empty(item, "entities item") for item in self.entities
         )
+        if self.generated_content is not None:
+            self.generated_content = require_non_empty(
+                self.generated_content, "generated_content"
+            )
         if self.latency_ms is not None and self.latency_ms < 0:
             raise DomainValidationError("latency_ms cannot be negative.")
         self.created_at = require_aware_utc(self.created_at, "created_at")
@@ -100,6 +106,7 @@ class AIAnalysis:
         confidence: Confidence | None = None,
         priority: Priority | None = None,
         latency_ms: int | None = None,
+        generated_content: str | None = None,
         analysis_id: AIAnalysisId | None = None,
         created_at: datetime | None = None,
     ) -> AIAnalysis:
@@ -124,6 +131,7 @@ class AIAnalysis:
             latency_ms=latency_ms,
             created_at=timestamp,
             updated_at=timestamp,
+            generated_content=generated_content,
         )
 
     def mark_completed(

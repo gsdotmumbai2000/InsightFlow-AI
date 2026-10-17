@@ -10,8 +10,11 @@ from insightflow.application.exceptions import TransactionError
 from insightflow.application.ports.repositories import (
     AIAnalysisRepository,
     AIProfileRepository,
+    AppSettingsRepository,
     AttachmentRepository,
     IntelligenceEventRepository,
+    MonitoringControlRepository,
+    MonitoringStateRepository,
     NotificationRepository,
     StoryRepository,
     TopicRepository,
@@ -22,11 +25,20 @@ from insightflow.infrastructure.database.migrations import initialize_database
 from insightflow.infrastructure.database.repositories.analyses import (
     SQLiteAIAnalysisRepository,
 )
+from insightflow.infrastructure.database.repositories.app_settings import (
+    SQLiteAppSettingsRepository,
+)
 from insightflow.infrastructure.database.repositories.attachments import (
     SQLiteAttachmentRepository,
 )
 from insightflow.infrastructure.database.repositories.events import (
     SQLiteIntelligenceEventRepository,
+)
+from insightflow.infrastructure.database.repositories.monitoring_control import (
+    SQLiteMonitoringControlRepository,
+)
+from insightflow.infrastructure.database.repositories.monitoring_state import (
+    SQLiteMonitoringStateRepository,
 )
 from insightflow.infrastructure.database.repositories.notifications import (
     SQLiteNotificationRepository,
@@ -56,6 +68,9 @@ class SQLiteUnitOfWork:
         self.attachments: AttachmentRepository
         self.notifications: NotificationRepository
         self.stories: StoryRepository
+        self.monitoring_states: MonitoringStateRepository
+        self.monitoring_control: MonitoringControlRepository
+        self.app_settings: AppSettingsRepository
 
     def __enter__(self) -> UnitOfWork:
         self._connection = connect(self._database_path)
@@ -68,6 +83,9 @@ class SQLiteUnitOfWork:
         self.attachments = SQLiteAttachmentRepository(self._connection)
         self.notifications = SQLiteNotificationRepository(self._connection)
         self.stories = SQLiteStoryRepository(self._connection)
+        self.monitoring_states = SQLiteMonitoringStateRepository(self._connection)
+        self.monitoring_control = SQLiteMonitoringControlRepository(self._connection)
+        self.app_settings = SQLiteAppSettingsRepository(self._connection)
         try:
             self._connection.execute("BEGIN")
         except sqlite3.Error as exc:

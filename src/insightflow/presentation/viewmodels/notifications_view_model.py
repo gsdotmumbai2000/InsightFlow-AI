@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from insightflow.application.dto.models import NotificationDto
 from insightflow.application.use_cases import ApplicationUseCases
@@ -27,6 +27,7 @@ class NotificationsViewState:
     selected_id: str | None = None
     error_message: str | None = None
     empty_message: str | None = None
+    info_message: str | None = None
 
 
 class NotificationsViewModel:
@@ -63,6 +64,16 @@ class NotificationsViewModel:
 
     def select(self, notification_id: str) -> NotificationsViewState:
         return self.load(selected_id=notification_id)
+
+    def clear_all(self) -> NotificationsViewState:
+        try:
+            deleted = self._executor.run(
+                lambda: self._use_cases.clear_all_notifications.execute()
+            )
+        except Exception as exc:
+            return replace(self.load(), error_message=user_message_for_error(exc))
+        self._selected_id = None
+        return replace(self.load(), info_message=f"Cleared {deleted} notification(s).")
 
     def mark_displayed(self) -> NotificationsViewState:
         return self._mark("displayed")

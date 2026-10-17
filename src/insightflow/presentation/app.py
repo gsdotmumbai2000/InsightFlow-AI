@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from insightflow.presentation.executor import UiExecutor
 from insightflow.presentation.models.context import PresentationContext
+from insightflow.presentation.monitoring_bridge import MonitoringRefreshBridge
 from insightflow.presentation.refresh import PresentationRefreshHub
 from insightflow.presentation.styles.theme import apply_application_theme
 from insightflow.presentation.viewmodels.dashboard_view_model import DashboardViewModel
@@ -56,7 +57,7 @@ def build_main_window(
     hub = refresh_hub or PresentationRefreshHub()
     cases = context.use_cases
 
-    return MainWindow(
+    window = MainWindow(
         app_name=context.app_name,
         dashboard=DashboardView(
             DashboardViewModel(cases, app_name=context.app_name, executor=ui_executor)
@@ -90,6 +91,17 @@ def build_main_window(
         refresh_hub=hub,
         on_close=on_close,
     )
+
+    # Background monitoring (GmailMonitoringWorker, a plain threading.Thread
+    # — see application/services/monitoring_events.py) cannot import PySide6
+    # to ask the UI to refresh. This bridge is the one place its
+    # application-level notifications cross into Qt, marshaled onto the GUI
+    # thread via a queued signal connection — never direct widget access
+    # from the worker thread.
+    monitoring_bridge = MonitoringRefreshBridge(hub, parent=window)
+    cases.monitoring_event_broadcaster.set_listener(monitoring_bridge.notify)
+
+    return window
 
 
 def run_gui(

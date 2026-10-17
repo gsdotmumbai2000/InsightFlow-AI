@@ -43,6 +43,10 @@ class AIProfileNotFoundError(NotFoundError):
     """AI profile lookup failed."""
 
 
+class AIProfileNotConfiguredError(ApplicationError):
+    """No AI profile is configured for the event's topic (or none was given)."""
+
+
 class DuplicateTopicError(ApplicationError):
     """Raised when creating a topic that violates uniqueness rules."""
 

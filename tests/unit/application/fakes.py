@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import cast
 
-from insightflow.application.exceptions import DuplicateEntityError
+from insightflow.application.exceptions import DuplicateEntityError, PersistenceError
 from insightflow.application.ports.repositories import UnitOfWork
 from insightflow.domain import (
     AIAnalysis,
@@ -16,10 +16,15 @@ from insightflow.domain import (
     Attachment,
     AttachmentId,
     EventId,
+    EventProcessingStatus,
     IntelligenceEvent,
+    MonitoringDesiredStatus,
+    MonitoringState,
+    MonitoringStateId,
     Notification,
     NotificationId,
     NotificationStatus,
+    SourceType,
     Story,
     StoryId,
     Topic,
@@ -143,10 +148,34 @@ class InMemoryIntelligenceEventRepository:
         )
         return [_clone(item) for item in items[:limit]]
 
+    def list_by_status(
+        self, status: EventProcessingStatus, *, limit: int = 100
+    ) -> list[IntelligenceEvent]:
+        items = sorted(
+            (item for item in self._items.values() if item.status is status),
+            key=lambda event: event.updated_at,
+        )
+        return [_clone(item) for item in items[:limit]]
+
+    _cleared: set[tuple[str, str]] = field(default_factory=set)
+
+    def delete_all(self) -> int:
+        # No cascade here; the SQLite repository's cascade is covered by
+        # tests/integration/test_repositories.py.
+        count = len(self._items)
+        for item in self._items.values():
+            self._cleared.add((item.source.source_id, item.source.external_id))
+        self._items.clear()
+        return count
+
+    def was_cleared(self, *, source_id: str, external_id: str) -> bool:
+        return (source_id, external_id) in self._cleared
+
 
 @dataclass
 class InMemoryAIProfileRepository:
     _items: dict[str, AIProfile] = field(default_factory=dict)
+    _deleted: set[str] = field(default_factory=set)
 
     def add(self, profile: AIProfile) -> None:
         if profile.id.value in self._items:
@@ -154,16 +183,26 @@ class InMemoryAIProfileRepository:
         self._items[profile.id.value] = _clone(profile)
 
     def get(self, profile_id: AIProfileId) -> AIProfile | None:
+        if profile_id.value in self._deleted:
+            return None
         profile = self._items.get(profile_id.value)
         return _clone(profile) if profile is not None else None
 
     def update(self, profile: AIProfile) -> None:
-        if profile.id.value not in self._items:
+        if profile.id.value not in self._items or profile.id.value in self._deleted:
             raise KeyError(f"AI profile not found: {profile.id.value}")
         self._items[profile.id.value] = _clone(profile)
 
     def list_all(self) -> list[AIProfile]:
-        return [_clone(item) for item in self._items.values()]
+        return [
+            _clone(item)
+            for key, item in self._items.items()
+            if key not in self._deleted
+        ]
+
+    def delete(self, profile_id: AIProfileId) -> None:
+        if profile_id.value in self._items:
+            self._deleted.add(profile_id.value)
 
 
 @dataclass
@@ -258,6 +297,11 @@ class InMemoryNotificationRepository:
         )
         return [_clone(item) for item in items[:limit]]
 
+    def delete_all(self) -> int:
+        count = len(self._items)
+        self._items.clear()
+        return count
+
 
 @dataclass
 class InMemoryStoryRepository:
@@ -286,6 +330,70 @@ class InMemoryStoryRepository:
 
 
 @dataclass
+class InMemoryMonitoringStateRepository:
+    _items: dict[str, MonitoringState] = field(default_factory=dict)
+
+    def add(self, state: MonitoringState) -> None:
+        if state.id.value in self._items:
+            raise DuplicateEntityError(
+                f"Monitoring state already exists: {state.id.value}"
+            )
+        self._items[state.id.value] = _clone(state)
+
+    def get(self, state_id: MonitoringStateId) -> MonitoringState | None:
+        state = self._items.get(state_id.value)
+        return _clone(state) if state is not None else None
+
+    def get_by_account(
+        self, *, account_id: str, provider: SourceType
+    ) -> MonitoringState | None:
+        for item in self._items.values():
+            if item.account_id == account_id and item.provider is provider:
+                return _clone(item)
+        return None
+
+    def update(self, state: MonitoringState) -> None:
+        if state.id.value not in self._items:
+            raise PersistenceError(f"Monitoring state not found: {state.id.value}")
+        self._items[state.id.value] = _clone(state)
+
+
+@dataclass
+class InMemoryMonitoringControlRepository:
+    _items: dict[tuple[str, SourceType], MonitoringDesiredStatus] = field(
+        default_factory=dict
+    )
+
+    def get_desired(
+        self, *, account_id: str, provider: SourceType
+    ) -> MonitoringDesiredStatus:
+        return self._items.get((account_id, provider), MonitoringDesiredStatus.STOPPED)
+
+    def set_desired(
+        self,
+        *,
+        account_id: str,
+        provider: SourceType,
+        desired: MonitoringDesiredStatus,
+    ) -> None:
+        self._items[(account_id, provider)] = desired
+
+
+@dataclass
+class InMemoryAppSettingsRepository:
+    _items: dict[str, str] = field(default_factory=dict)
+
+    def get(self, key: str) -> str | None:
+        return self._items.get(key)
+
+    def set(self, key: str, value: str) -> None:
+        self._items[key] = value
+
+    def delete(self, key: str) -> None:
+        self._items.pop(key, None)
+
+
+@dataclass
 class InMemoryUnitOfWork:
     """Shared in-memory stores across UoW instances created by one factory."""
 
@@ -296,6 +404,9 @@ class InMemoryUnitOfWork:
     attachments: InMemoryAttachmentRepository
     notifications: InMemoryNotificationRepository
     stories: InMemoryStoryRepository
+    monitoring_states: InMemoryMonitoringStateRepository
+    monitoring_control: InMemoryMonitoringControlRepository
+    app_settings: InMemoryAppSettingsRepository
     _committed: bool = False
     _active: bool = False
 
@@ -343,6 +454,15 @@ class InMemoryStore:
         default_factory=InMemoryNotificationRepository
     )
     stories: InMemoryStoryRepository = field(default_factory=InMemoryStoryRepository)
+    monitoring_states: InMemoryMonitoringStateRepository = field(
+        default_factory=InMemoryMonitoringStateRepository
+    )
+    monitoring_control: InMemoryMonitoringControlRepository = field(
+        default_factory=InMemoryMonitoringControlRepository
+    )
+    app_settings: InMemoryAppSettingsRepository = field(
+        default_factory=InMemoryAppSettingsRepository
+    )
 
     def unit_of_work_factory(self) -> UnitOfWork:
         return cast(
@@ -355,5 +475,8 @@ class InMemoryStore:
                 attachments=self.attachments,
                 notifications=self.notifications,
                 stories=self.stories,
+                monitoring_states=self.monitoring_states,
+                monitoring_control=self.monitoring_control,
+                app_settings=self.app_settings,
             ),
         )

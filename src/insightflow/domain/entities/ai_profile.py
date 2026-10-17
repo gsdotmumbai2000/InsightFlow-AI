@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from insightflow.domain.enums import AIOutputStyle
 from insightflow.domain.exceptions import DomainValidationError
 from insightflow.domain.value_objects import AIProfileId
 from insightflow.domain.value_objects._guards import (
@@ -27,8 +28,11 @@ class AIProfile:
     output_schema_version: str
     created_at: datetime
     updated_at: datetime
+    output_style: AIOutputStyle = AIOutputStyle.ANALYSIS
 
     def __post_init__(self) -> None:
+        if not isinstance(self.output_style, AIOutputStyle):
+            raise DomainValidationError("AIProfile.output_style is invalid.")
         self.name = require_non_empty(self.name, "AIProfile.name")
         self.instructions = require_non_empty(
             self.instructions, "AIProfile.instructions"
@@ -59,6 +63,7 @@ class AIProfile:
         description: str | None = None,
         version: int = 1,
         enabled: bool = True,
+        output_style: AIOutputStyle = AIOutputStyle.ANALYSIS,
         profile_id: AIProfileId | None = None,
         created_at: datetime | None = None,
     ) -> AIProfile:
@@ -73,7 +78,35 @@ class AIProfile:
             output_schema_version=output_schema_version,
             created_at=timestamp,
             updated_at=timestamp,
+            output_style=output_style,
         )
+
+    def revise(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        instructions: str,
+        output_style: AIOutputStyle | None = None,
+        at: datetime | None = None,
+    ) -> None:
+        """Edit the profile; changed instructions or style start a new version.
+
+        Analyses record the profile version they used, so a prompt change
+        must never rewrite the version earlier analyses refer to.
+        """
+        name = require_non_empty(name, "AIProfile.name")
+        instructions = require_non_empty(instructions, "AIProfile.instructions")
+        if description is not None:
+            description = require_non_empty(description, "AIProfile.description")
+        style = output_style or self.output_style
+        if instructions != self.instructions or style is not self.output_style:
+            self.version += 1
+        self.name = name
+        self.description = description
+        self.instructions = instructions
+        self.output_style = style
+        self.updated_at = require_aware_utc(at or utc_now(), "at")
 
     def enable(self, *, at: datetime | None = None) -> None:
         self.enabled = True

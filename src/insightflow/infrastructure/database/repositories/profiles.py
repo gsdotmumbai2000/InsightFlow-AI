@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 
 from insightflow.domain import AIProfile, AIProfileId
 from insightflow.infrastructure.database.errors import run_db
@@ -10,6 +11,7 @@ from insightflow.infrastructure.database.mappers import (
     profile_from_rows,
     profile_to_rows,
 )
+from insightflow.infrastructure.database.serialization import datetime_to_db
 
 
 class SQLiteAIProfileRepository:
@@ -130,10 +132,26 @@ class SQLiteAIProfileRepository:
 
         run_db(_op, entity="ai_profile")
 
+    def delete(self, profile_id: AIProfileId) -> None:
+        def _op() -> None:
+            self._connection.execute(
+                """
+                INSERT OR IGNORE INTO ai_profile_deletions (ai_profile_id, deleted_at)
+                VALUES (?, ?)
+                """,
+                (profile_id.value, datetime_to_db(datetime.now(UTC))),
+            )
+
+        run_db(_op, entity="ai_profile")
+
     def list_all(self) -> list[AIProfile]:
         def _op() -> list[AIProfile]:
             rows = self._connection.execute(
-                "SELECT id FROM ai_profiles ORDER BY name COLLATE NOCASE"
+                """
+                SELECT id FROM ai_profiles
+                WHERE id NOT IN (SELECT ai_profile_id FROM ai_profile_deletions)
+                ORDER BY name COLLATE NOCASE
+                """
             ).fetchall()
             profiles: list[AIProfile] = []
             for row in rows:
@@ -146,7 +164,12 @@ class SQLiteAIProfileRepository:
 
     def _load(self, profile_id: str) -> AIProfile | None:
         profile_row = self._connection.execute(
-            "SELECT * FROM ai_profiles WHERE id = ?", (profile_id,)
+            """
+            SELECT * FROM ai_profiles
+            WHERE id = ?
+              AND id NOT IN (SELECT ai_profile_id FROM ai_profile_deletions)
+            """,
+            (profile_id,),
         ).fetchone()
         if profile_row is None:
             return None

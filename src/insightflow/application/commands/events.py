@@ -57,6 +57,14 @@ class CreateIntelligenceEventUseCase:
                         raise DuplicateEventError(
                             "An event already exists for this source identity."
                         )
+                    # Cleared by the user: never re-ingest it (full sync
+                    # re-reads recent messages on every Agent start).
+                    if uow.events.was_cleared(
+                        source_id=source.source_id, external_id=source.external_id
+                    ):
+                        raise DuplicateEventError(
+                            "This message was cleared and is not ingested again."
+                        )
                     topic_id = None
                     if request.topic_id is not None:
                         topic_id = TopicId(request.topic_id)
@@ -83,6 +91,29 @@ class CreateIntelligenceEventUseCase:
                     uow.events.add(event)
                     uow.commit()
                     return event_to_dto(event)
+
+            return run_mutating(_run)
+
+
+class ClearAllIntelligenceEventsUseCase:
+    """Delete every intelligence event with its analyses and notifications.
+
+    Cleared messages are remembered and never ingested again (see
+    ``IntelligenceEventRepository.delete_all``). Returns how many events
+    were deleted.
+    """
+
+    def __init__(self, uow_factory: Callable[[], UnitOfWork]) -> None:
+        self._uow_factory = uow_factory
+
+    def execute(self) -> int:
+        with use_case_scope("ClearAllIntelligenceEvents"):
+
+            def _run() -> int:
+                with unit_of_work_scope(self._uow_factory) as uow:
+                    deleted = uow.events.delete_all()
+                    uow.commit()
+                    return deleted
 
             return run_mutating(_run)
 

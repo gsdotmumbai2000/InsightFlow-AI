@@ -33,6 +33,38 @@ class MarketImpactDto:
 
 
 @dataclass(frozen=True, slots=True)
+class AIProfileDto:
+    id: str
+    name: str
+    description: str | None
+    instructions: str
+    version: int
+    enabled: bool
+    output_schema_version: str
+    created_at: datetime
+    updated_at: datetime
+    output_style: str = "ANALYSIS"  # AIOutputStyle value
+
+
+@dataclass(frozen=True, slots=True)
+class CreateAIProfileRequest:
+    name: str
+    instructions: str
+    output_schema_version: str = "v1"
+    description: str | None = None
+    output_style: str = "ANALYSIS"  # AIOutputStyle value
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateAIProfileRequest:
+    profile_id: str
+    name: str
+    instructions: str
+    description: str | None = None
+    output_style: str | None = None  # None keeps the current style
+
+
+@dataclass(frozen=True, slots=True)
 class TopicDto:
     id: str
     name: str
@@ -124,6 +156,7 @@ class AIAnalysisDto:
     failure_reason: str | None
     created_at: datetime
     updated_at: datetime
+    generated_content: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

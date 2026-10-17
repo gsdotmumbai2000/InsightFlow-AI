@@ -13,7 +13,7 @@ def test_main_window_construction(main_window: MainWindow) -> None:
     assert main_window.statusBar() is not None
     assert main_window._status_app.text() == "Application: Running"
     assert main_window._status_gmail.text() == "Gmail: Not connected"
-    assert main_window._status_ai.text() == "AI: Not configured"
+    assert main_window._status_ai.text() == "AI: Disabled"
     assert main_window._status_db.text() == "Database: Ready"
 
 

@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QVBoxLayout,
@@ -23,6 +24,7 @@ from insightflow.presentation.widgets.page_helpers import (
     make_page_header,
     set_table_row,
     show_error,
+    show_info,
     vertical_page,
 )
 
@@ -59,6 +61,11 @@ class NotificationsView(QWidget):
         )
         actions.addWidget(self._displayed)
         actions.addWidget(self._dismissed)
+        self._clear_all = QPushButton("Clear all")
+        self._clear_all.setObjectName("ClearAllNotificationsButton")
+        self._clear_all.setAccessibleName("Clear all notifications")
+        self._clear_all.clicked.connect(self._on_clear_all_clicked)
+        actions.addWidget(self._clear_all)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -78,10 +85,25 @@ class NotificationsView(QWidget):
     def refresh(self) -> None:
         self.apply_state(self._vm.load())
 
+    def _on_clear_all_clicked(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Clear all notifications",
+            "Delete every notification? Intelligence events and their AI "
+            "analyses are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.apply_state(self._vm.clear_all())
+
     def apply_state(self, state: NotificationsViewState) -> None:
         clear_banners(self)
         if state.error_message:
             show_error(self, state.error_message)
+        if state.info_message:
+            show_info(self, state.info_message)
+        self._clear_all.setEnabled(bool(state.rows))
         self._updating = True
         try:
             self._empty.setText(state.empty_message or "")

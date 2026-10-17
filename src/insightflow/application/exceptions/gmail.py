@@ -35,3 +35,31 @@ class GmailConfigurationError(GmailError):
 
 class GmailReauthenticationRequiredError(GmailError):
     """Stored credentials require interactive re-authentication."""
+
+
+class TopicNotGmailConfiguredError(GmailError):
+    """Topic has no Gmail label mapping (SourceConfiguration is not GMAIL)."""
+
+
+class GmailMessageNotFoundError(GmailError):
+    """The requested Gmail message ID does not exist or is inaccessible."""
+
+
+class GmailMessageParsingError(GmailError):
+    """A Gmail message could not be normalized (malformed MIME structure)."""
+
+
+class GmailWatchError(GmailError):
+    """Establishing, renewing, or stopping a Gmail watch failed."""
+
+
+class GmailHistoryUnavailableError(GmailError):
+    """The requested startHistoryId is no longer available (Gmail 404).
+
+    Recovery is a full synchronization followed by re-establishing the
+    watch to obtain a fresh history baseline.
+    """
+
+
+class GmailHistorySyncError(GmailError):
+    """Gmail history synchronization failed for a reason other than 404."""

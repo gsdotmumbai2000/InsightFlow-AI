@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+from insightflow.application.exceptions.ai import (
+    AIError,
+    AIProviderAuthenticationError,
+    AIProviderError,
+    AIProviderInvalidResponseError,
+    AIProviderRateLimitError,
+    AIProviderTimeoutError,
+    AIProviderUnavailableError,
+    AIResponseValidationError,
+)
 from insightflow.application.exceptions.application import (
     AIAnalysisNotFoundError,
+    AIProfileNotConfiguredError,
     AIProfileNotFoundError,
     ApplicationError,
     ApplicationValidationError,
@@ -23,9 +34,20 @@ from insightflow.application.exceptions.gmail import (
     GmailConfigurationError,
     GmailConnectionError,
     GmailError,
+    GmailHistorySyncError,
+    GmailHistoryUnavailableError,
+    GmailMessageNotFoundError,
+    GmailMessageParsingError,
     GmailRateLimitError,
     GmailReauthenticationRequiredError,
     GmailUnavailableError,
+    GmailWatchError,
+    TopicNotGmailConfiguredError,
+)
+from insightflow.application.exceptions.monitoring import (
+    MonitoringConfigurationError,
+    MonitoringError,
+    MonitoringNotRunningError,
 )
 from insightflow.application.exceptions.persistence import (
     DatabaseUnavailableError,
@@ -34,10 +56,25 @@ from insightflow.application.exceptions.persistence import (
     PersistenceError,
     TransactionError,
 )
+from insightflow.application.exceptions.pubsub import (
+    PubSubAuthenticationError,
+    PubSubConfigurationError,
+    PubSubError,
+    PubSubSubscriptionError,
+)
 
 __all__ = [
     "AIAnalysisNotFoundError",
+    "AIError",
+    "AIProfileNotConfiguredError",
     "AIProfileNotFoundError",
+    "AIProviderAuthenticationError",
+    "AIProviderError",
+    "AIProviderInvalidResponseError",
+    "AIProviderRateLimitError",
+    "AIProviderTimeoutError",
+    "AIProviderUnavailableError",
+    "AIResponseValidationError",
     "ApplicationError",
     "ApplicationValidationError",
     "AttachmentNotFoundError",
@@ -52,14 +89,27 @@ __all__ = [
     "GmailConfigurationError",
     "GmailConnectionError",
     "GmailError",
+    "GmailHistorySyncError",
+    "GmailHistoryUnavailableError",
+    "GmailMessageNotFoundError",
+    "GmailMessageParsingError",
     "GmailRateLimitError",
     "GmailReauthenticationRequiredError",
     "GmailUnavailableError",
+    "GmailWatchError",
     "InvalidOperationError",
+    "MonitoringConfigurationError",
+    "MonitoringError",
+    "MonitoringNotRunningError",
     "NotFoundError",
     "NotificationNotFoundError",
     "PersistenceError",
+    "PubSubAuthenticationError",
+    "PubSubConfigurationError",
+    "PubSubError",
+    "PubSubSubscriptionError",
     "StoryNotFoundError",
     "TopicNotFoundError",
+    "TopicNotGmailConfiguredError",
     "TransactionError",
 ]

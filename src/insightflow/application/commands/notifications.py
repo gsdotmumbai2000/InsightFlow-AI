@@ -19,6 +19,24 @@ from insightflow.application.ports.repositories import UnitOfWork
 from insightflow.domain import NotificationId
 
 
+class ClearAllNotificationsUseCase:
+    """Delete every notification; returns how many were deleted."""
+
+    def __init__(self, uow_factory: Callable[[], UnitOfWork]) -> None:
+        self._uow_factory = uow_factory
+
+    def execute(self) -> int:
+        with use_case_scope("ClearAllNotifications"):
+
+            def _run() -> int:
+                with unit_of_work_scope(self._uow_factory) as uow:
+                    deleted = uow.notifications.delete_all()
+                    uow.commit()
+                    return deleted
+
+            return run_mutating(_run)
+
+
 class GetNotificationUseCase:
     def __init__(self, uow_factory: Callable[[], UnitOfWork]) -> None:
         self._uow_factory = uow_factory

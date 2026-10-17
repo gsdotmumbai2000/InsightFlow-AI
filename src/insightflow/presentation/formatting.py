@@ -8,7 +8,7 @@ from datetime import datetime
 def format_timestamp(value: datetime | None) -> str:
     if value is None:
         return "—"
-    return value.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    return value.astimezone().strftime("%d/%m/%Y")
 
 
 def display_or_dash(value: str | None) -> str:

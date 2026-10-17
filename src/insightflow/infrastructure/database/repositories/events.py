@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 
-from insightflow.domain import EventId, IntelligenceEvent, TopicId
+from insightflow.domain import (
+    EventId,
+    EventProcessingStatus,
+    IntelligenceEvent,
+    TopicId,
+)
 from insightflow.infrastructure.database.errors import run_db
 from insightflow.infrastructure.database.mappers import event_from_row, event_to_row
+from insightflow.infrastructure.database.serialization import datetime_to_db
 from insightflow.infrastructure.database.sources import ensure_source
 
 
@@ -124,6 +131,52 @@ class SQLiteIntelligenceEventRepository:
                 LIMIT ?
                 """,
                 (limit,),
+            ).fetchall()
+            return [event_from_row(row) for row in rows]
+
+        return run_db(_op, entity="intelligence_event")
+
+    def delete_all(self) -> int:
+        def _op() -> int:
+            self._connection.execute(
+                """
+                INSERT OR IGNORE INTO cleared_event_sources (
+                    source_id, external_id, cleared_at
+                )
+                SELECT source_id, external_id, ? FROM intelligence_events
+                """,
+                (datetime_to_db(datetime.now(UTC)),),
+            )
+            cursor = self._connection.execute("DELETE FROM intelligence_events")
+            return cursor.rowcount
+
+        return run_db(_op, entity="intelligence_event")
+
+    def was_cleared(self, *, source_id: str, external_id: str) -> bool:
+        def _op() -> bool:
+            row = self._connection.execute(
+                """
+                SELECT 1 FROM cleared_event_sources
+                WHERE source_id = ? AND external_id = ?
+                """,
+                (source_id, external_id),
+            ).fetchone()
+            return row is not None
+
+        return run_db(_op, entity="intelligence_event")
+
+    def list_by_status(
+        self, status: EventProcessingStatus, *, limit: int = 100
+    ) -> list[IntelligenceEvent]:
+        def _op() -> list[IntelligenceEvent]:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM intelligence_events
+                WHERE status = ?
+                ORDER BY updated_at ASC
+                LIMIT ?
+                """,
+                (status.value, limit),
             ).fetchall()
             return [event_from_row(row) for row in rows]
 

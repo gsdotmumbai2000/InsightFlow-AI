@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import sys
 from pathlib import Path
 
-from insightflow.bootstrap.container import AppContainer
+from insightflow.application.process_role import ProcessRole
 from insightflow.bootstrap.dependencies import build_container
 from insightflow.bootstrap.presentation import presentation_context_from_container
-from insightflow.bootstrap.shutdown import shutdown
+from insightflow.bootstrap.process import Application as Application
 from insightflow.configuration.env import EnvironmentSource
 from insightflow.infrastructure.logging.setup import get_logger
 from insightflow.presentation.app import run_gui
@@ -17,26 +17,21 @@ from insightflow.shared.correlation import correlation_context
 logger = get_logger("bootstrap.startup")
 
 
-@dataclass(slots=True)
-class Application:
-    """Running application handle produced by startup."""
-
-    container: AppContainer
-    started: bool = False
-
-    def stop(self) -> None:
-        """Shut down the application cleanly."""
-        shutdown(self)
-        self.started = False
-
-
 def create_application(
     *,
     environ: EnvironmentSource | None = None,
     dotenv_path: Path | None = None,
 ) -> Application:
-    """Initialize configuration, logging, directories, and dependencies."""
-    container = build_container(environ=environ, dotenv_path=dotenv_path)
+    """Initialize configuration, logging, directories, and dependencies.
+
+    Always built as ``ProcessRole.DESKTOP`` (Phase 13): this is the GUI
+    entry point (``python -m insightflow`` / the ``insightflow`` console
+    script) and must never own ``GmailMonitoringWorker``/``AIWorker`` — see
+    ``bootstrap.agent`` for the process that does.
+    """
+    container = build_container(
+        environ=environ, dotenv_path=dotenv_path, role=ProcessRole.DESKTOP
+    )
     app = Application(container=container, started=True)
     with correlation_context():
         logger.info(
@@ -58,9 +53,26 @@ def run(
     return create_application(environ=environ, dotenv_path=dotenv_path)
 
 
+def _start_background_agent(app: Application) -> None:
+    """Best effort: the Desktop must still open if the Agent can't start."""
+    if sys.platform != "win32":
+        return
+    from insightflow.infrastructure.process.agent_launcher import (
+        launch_background_agent,
+    )
+
+    try:
+        launch_background_agent(log_dir=app.container.directories.logs)
+    except Exception:
+        logger.warning("Could not start the Background Agent.", exc_info=True)
+    else:
+        logger.info("Background Agent launch requested.")
+
+
 def main() -> int:
     """CLI entry point used by ``python -m insightflow`` and console script."""
     app = run()
+    _start_background_agent(app)
     try:
         with correlation_context():
             logger.info(

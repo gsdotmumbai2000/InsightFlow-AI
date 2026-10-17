@@ -97,3 +97,9 @@ class SQLiteNotificationRepository:
             return [notification_from_row(row) for row in rows]
 
         return run_db(_op, entity="notification")
+
+    def delete_all(self) -> int:
+        def _op() -> int:
+            return self._connection.execute("DELETE FROM notifications").rowcount
+
+        return run_db(_op, entity="notification")

@@ -61,6 +61,18 @@ class Sentiment(StrEnum):
     NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
+class AIOutputStyle(StrEnum):
+    """What an AI profile asks the model to produce.
+
+    ANALYSIS: the structured analysis (summary, key facts, market impact...).
+    CUSTOM_TEXT: whatever the profile's instructions ask for (e.g. a news
+    script), returned as free text, plus a short summary for lists.
+    """
+
+    ANALYSIS = "ANALYSIS"
+    CUSTOM_TEXT = "CUSTOM_TEXT"
+
+
 class MarketImpactDirection(StrEnum):
     """Directional market interpretation — not a guaranteed prediction."""
 
@@ -125,3 +137,24 @@ class SourceType(StrEnum):
 
     GMAIL = "GMAIL"
     GENERIC = "GENERIC"
+
+
+class MonitoringStatus(StrEnum):
+    """Lifecycle status for real-time source monitoring (Phase 10)."""
+
+    NOT_CONFIGURED = "NOT_CONFIGURED"
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    ERROR = "ERROR"
+    STOPPED = "STOPPED"
+
+
+class MonitoringDesiredStatus(StrEnum):
+    """Persisted user intent for monitoring, independent of actual worker
+    state (Phase 13). Written by the Desktop UI, read and reconciled by the
+    Background Agent — see ``application.services.monitoring_reconciler``.
+    """
+
+    RUNNING = "RUNNING"
+    STOPPED = "STOPPED"

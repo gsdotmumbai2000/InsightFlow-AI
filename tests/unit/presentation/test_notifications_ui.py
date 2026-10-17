@@ -64,3 +64,43 @@ def test_notification_list_displayed_dismissed_empty(
 
     page.apply_state(page._vm.mark_dismissed())
     assert _cell(page._table, 0, 3) == "DISMISSED"
+
+
+def test_clear_all_notifications(
+    qapp: QApplication,
+    main_window: MainWindow,
+    use_cases: ApplicationUseCases,
+    memory_store: InMemoryStore,
+) -> None:
+    page = _notifications(main_window)
+    event = use_cases.create_intelligence_event.execute(
+        CreateIntelligenceEventRequest(
+            source_type="GENERIC",
+            source_id="local",
+            external_id="n-clear",
+            title="Notify source",
+        )
+    )
+    with memory_store.unit_of_work_factory() as uow:
+        for index in range(2):
+            uow.notifications.add(
+                Notification.create(
+                    event_id=EventId(event.id),
+                    priority=Priority.MEDIUM,
+                    title=f"Alert {index}",
+                )
+            )
+        uow.commit()
+    page.refresh()
+    qapp.processEvents()
+    assert page._table.rowCount() == 2
+    assert page._clear_all.isEnabled() is True
+
+    state = page._vm.clear_all()
+    page.apply_state(state)
+    qapp.processEvents()
+
+    assert state.info_message == "Cleared 2 notification(s)."
+    assert page._table.rowCount() == 0
+    assert "No notifications" in page._empty.text()
+    assert page._clear_all.isEnabled() is False

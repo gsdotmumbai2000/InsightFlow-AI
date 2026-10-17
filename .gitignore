@@ -68,3 +68,11 @@ logs/
 
 # Local Google OAuth client files (never commit)
 API_Key/
+
+# Phase 10: InsightFlow never uses service-account keys (OAuth-only
+# credential strategy — see docs/17_Phase10_Gmail_Realtime_Monitoring_Notes.md),
+# but guard defensively against one ever being dropped into the repo.
+service-account*.json
+*-service-account.json
+gcp-*.json
+pubsub-*.json

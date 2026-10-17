@@ -37,6 +37,10 @@ _PROCESSING_SOURCES = frozenset(
         EventProcessingStatus.DEDUPLICATING,
         EventProcessingStatus.AI_PENDING,
         EventProcessingStatus.RETRY_PENDING,
+        # Re-analysis (Phase 11) must be able to restart AI processing for an
+        # event whose pipeline already reached a terminal state.
+        EventProcessingStatus.COMPLETED,
+        EventProcessingStatus.FAILED,
     }
 )
 
@@ -159,6 +163,19 @@ class IntelligenceEvent:
             return
         raise InvalidStateTransitionError(
             f"Cannot mark_received from status {self.status.value}."
+        )
+
+    def cancel_ai_processing(self, *, at: datetime | None = None) -> None:
+        """Return a not-yet-analyzed event from AI_PROCESSING to RECEIVED.
+
+        Used when the user turns automatic AI analysis off: the waiting
+        backlog is cancelled rather than analyzed (and billed) later.
+        """
+        self._transition(
+            EventProcessingStatus.RECEIVED,
+            at=at,
+            allowed_from=frozenset({EventProcessingStatus.AI_PROCESSING}),
+            action="cancel_ai_processing",
         )
 
     def mark_processing(self, *, at: datetime | None = None) -> None:

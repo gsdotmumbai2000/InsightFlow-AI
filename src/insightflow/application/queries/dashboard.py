@@ -5,10 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from insightflow.application._support import unit_of_work_scope, use_case_scope
+from insightflow.application.commands.monitoring import GetMonitoringStatusUseCase
 from insightflow.application.dto.mappers import event_to_dto, notification_to_dto
 from insightflow.application.dto.models import DashboardSummaryDto
 from insightflow.application.ports.repositories import UnitOfWork
-from insightflow.domain import AIAnalysisStatus, EventProcessingStatus, Priority
+from insightflow.domain import (
+    AIAnalysisStatus,
+    EventProcessingStatus,
+    Priority,
+)
 
 _UNPROCESSED_STATUSES = frozenset(
     {
@@ -27,8 +32,13 @@ _HIGH_PRIORITIES = frozenset({Priority.HIGH, Priority.CRITICAL})
 
 
 class GetDashboardSummaryUseCase:
-    def __init__(self, uow_factory: Callable[[], UnitOfWork]) -> None:
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork],
+        monitoring_status: GetMonitoringStatusUseCase | None = None,
+    ) -> None:
         self._uow_factory = uow_factory
+        self._monitoring_status = monitoring_status
 
     def execute(
         self,
@@ -36,6 +46,7 @@ class GetDashboardSummaryUseCase:
         recent_limit: int = 10,
         analysis_scan_limit: int = 100,
     ) -> DashboardSummaryDto:
+        monitoring_status = self._resolve_monitoring_status()
         with (
             use_case_scope("GetDashboardSummary"),
             unit_of_work_scope(self._uow_factory) as uow,
@@ -64,7 +75,6 @@ class GetDashboardSummaryUseCase:
                     completed_analyses += 1
 
             notes = (
-                "monitoring_status is unavailable until Gmail monitoring state exists.",
                 "Aggregate counts are derived from a bounded recent-event "
                 f"scan (limit={analysis_scan_limit}).",
             )
@@ -76,10 +86,29 @@ class GetDashboardSummaryUseCase:
                 unprocessed_event_count=unprocessed,
                 pending_notification_count=len(pending_notifications),
                 completed_analysis_recent_count=completed_analyses,
-                monitoring_status=None,
+                monitoring_status=monitoring_status,
                 recent_events=tuple(event_to_dto(e) for e in recent_events),
                 recent_notifications=tuple(
                     notification_to_dto(n) for n in recent_notifications
                 ),
                 notes=notes,
             )
+
+    def _resolve_monitoring_status(self) -> str | None:
+        """Real-time monitoring status for the connected Gmail account.
+
+        Delegates entirely to ``GetMonitoringStatusUseCase`` — the single
+        place that reconciles a persisted ``RUNNING``/``STARTING`` status
+        against actual worker liveness (see its docstring) — so Dashboard
+        and Settings can never disagree, and "Running" is never reported
+        here unless a worker is genuinely alive in this process.
+        ``None`` (rendered "Not configured") when Gmail is not connected,
+        monitoring has never been started, or no monitoring-status use
+        case was wired in (e.g. a minimal test double).
+        """
+        if self._monitoring_status is None:
+            return None
+        status = self._monitoring_status.execute()
+        if status.status == "NOT_CONFIGURED":
+            return None
+        return status.status

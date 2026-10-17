@@ -44,6 +44,14 @@ class SQLiteAIAnalysisRepository:
                 """,
                 row,
             )
+            if analysis.generated_content is not None:
+                self._connection.execute(
+                    """
+                    INSERT INTO ai_analysis_contents (analysis_id, generated_content)
+                    VALUES (?, ?)
+                    """,
+                    (analysis.id.value, analysis.generated_content),
+                )
 
         run_db(_op, entity="ai_analysis")
 
@@ -51,9 +59,10 @@ class SQLiteAIAnalysisRepository:
         def _op() -> AIAnalysis | None:
             row = self._connection.execute(
                 """
-                SELECT a.*, v.version_number
+                SELECT a.*, v.version_number, c.generated_content
                 FROM ai_analyses a
                 JOIN ai_profile_versions v ON v.id = a.ai_profile_version_id
+                LEFT JOIN ai_analysis_contents c ON c.analysis_id = a.id
                 WHERE a.id = ?
                 """,
                 (analysis_id.value,),
@@ -66,9 +75,10 @@ class SQLiteAIAnalysisRepository:
         def _op() -> list[AIAnalysis]:
             rows = self._connection.execute(
                 """
-                SELECT a.*, v.version_number
+                SELECT a.*, v.version_number, c.generated_content
                 FROM ai_analyses a
                 JOIN ai_profile_versions v ON v.id = a.ai_profile_version_id
+                LEFT JOIN ai_analysis_contents c ON c.analysis_id = a.id
                 WHERE a.event_id = ?
                 ORDER BY a.created_at DESC
                 """,

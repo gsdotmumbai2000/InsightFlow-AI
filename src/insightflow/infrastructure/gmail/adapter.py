@@ -14,6 +14,12 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from insightflow.application.dto.email import (
+    EmailMessageDto,
+    GmailMessageListPageDto,
+    GmailMessageRefDto,
+    ListGmailMessagesRequest,
+)
 from insightflow.application.dto.gmail import (
     GmailAccountDto,
     GmailConnectionStatusDto,
@@ -21,17 +27,21 @@ from insightflow.application.dto.gmail import (
 )
 from insightflow.application.exceptions.gmail import (
     GmailAuthenticationError,
-    GmailConfigurationError,
     GmailConnectionError,
+    GmailMessageParsingError,
     GmailReauthenticationRequiredError,
 )
 from insightflow.application.ports.secret_store import SecretStore
 from insightflow.configuration.models import GmailSettings
 from insightflow.infrastructure.gmail.errors import raise_translated_google_error
+from insightflow.infrastructure.gmail.message_mapper import map_gmail_message_to_dto
+from insightflow.infrastructure.gmail.mime import DEFAULT_MAX_BODY_BYTES
+from insightflow.infrastructure.gmail.oauth_client import (
+    load_google_oauth_client_config,
+)
 from insightflow.infrastructure.gmail.scopes import GMAIL_OAUTH_SCOPES
 from insightflow.infrastructure.secrets.keys import (
     GMAIL_ACCOUNT_PROFILE_KEY,
-    GMAIL_OAUTH_CLIENT_SECRET_KEY,
     GMAIL_OAUTH_TOKEN_KEY,
 )
 
@@ -41,6 +51,9 @@ _STATUS_NOT_CONNECTED = "NOT_CONNECTED"
 _STATUS_CONNECTED = "CONNECTED"
 _STATUS_REAUTH = "REAUTHENTICATION_REQUIRED"
 _STATUS_FAILED = "CONNECTION_FAILED"
+
+# Google documents a maximum of 500 results per users.messages.list call.
+GMAIL_LIST_MAX_RESULTS = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +211,74 @@ class GoogleGmailAdapter:
         logger.info("Listed %s Gmail labels", len(result))
         return result
 
+    def list_message_ids(
+        self, request: ListGmailMessagesRequest
+    ) -> GmailMessageListPageDto:
+        """List message references for one label (bounded, paginated)."""
+        credentials = self._require_valid_credentials()
+        capped_max_results = max(1, min(request.max_results, GMAIL_LIST_MAX_RESULTS))
+        try:
+            service = build(
+                "gmail", "v1", credentials=credentials, cache_discovery=False
+            )
+            response = (
+                service.users()
+                .messages()
+                .list(
+                    userId="me",
+                    labelIds=[request.label_id],
+                    maxResults=capped_max_results,
+                    pageToken=request.page_token,
+                )
+                .execute()
+            )
+        except Exception as exc:
+            raise_translated_google_error(exc)
+
+        raw_messages = (
+            response.get("messages", []) if isinstance(response, dict) else []
+        )
+        refs = tuple(
+            GmailMessageRefDto(
+                message_id=str(item["id"]), thread_id=item.get("threadId")
+            )
+            for item in raw_messages
+            if isinstance(item, dict) and item.get("id")
+        )
+        return GmailMessageListPageDto(
+            messages=refs,
+            next_page_token=response.get("nextPageToken"),
+            result_size_estimate=response.get("resultSizeEstimate"),
+        )
+
+    def get_message(self, message_id: str) -> EmailMessageDto:
+        """Retrieve and normalize a single Gmail message (format=FULL)."""
+        credentials = self._require_valid_credentials()
+        try:
+            service = build(
+                "gmail", "v1", credentials=credentials, cache_discovery=False
+            )
+            raw = (
+                service.users()
+                .messages()
+                .get(userId="me", id=message_id, format="full")
+                .execute()
+            )
+        except Exception as exc:
+            raise_translated_google_error(exc)
+
+        try:
+            return map_gmail_message_to_dto(raw, max_body_bytes=DEFAULT_MAX_BODY_BYTES)
+        except Exception as exc:
+            logger.warning(
+                "Failed to normalize Gmail message id=%s error=%s",
+                message_id,
+                type(exc).__name__,
+            )
+            raise GmailMessageParsingError(
+                f"Gmail message {message_id} could not be parsed."
+            ) from exc
+
     def _require_valid_credentials(self) -> Credentials:
         credentials = self._load_credentials()
         if credentials is None:
@@ -215,47 +296,15 @@ class GoogleGmailAdapter:
         return credentials
 
     def _load_client_config(self) -> dict[str, Any]:
-        if self._settings.client_secrets_file is not None:
-            path = self._settings.client_secrets_file
-            if not path.is_file():
-                raise GmailConfigurationError(
-                    f"Gmail client secrets file was not found: {path}"
-                )
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise GmailConfigurationError(
-                    "Unable to read Gmail client secrets file."
-                ) from exc
-            if not isinstance(payload, dict):
-                raise GmailConfigurationError(
-                    "Gmail client secrets file must contain a JSON object."
-                )
-            if "installed" not in payload and "web" not in payload:
-                raise GmailConfigurationError(
-                    "Gmail client secrets file must contain an installed or web client."
-                )
-            return cast(dict[str, Any], payload)
+        return load_google_oauth_client_config(self._settings, self._secrets)
 
-        client_id = self._settings.client_id
-        client_secret = self._settings.client_secret
-        if not client_secret:
-            client_secret = self._secrets.retrieve(GMAIL_OAUTH_CLIENT_SECRET_KEY)
-        if not client_id or not client_secret:
-            raise GmailConfigurationError(
-                "Gmail OAuth is not configured. Set INSIGHTFLOW_GMAIL_CLIENT_ID and "
-                "INSIGHTFLOW_GMAIL_CLIENT_SECRET, or "
-                "INSIGHTFLOW_GMAIL_CLIENT_SECRETS_FILE."
-            )
-        return {
-            "installed": {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": ["http://localhost"],
-            }
-        }
+    def gmail_credentials(self) -> Credentials:
+        """Public accessor for a valid credentials object (Phase 10).
+
+        Lets ``GoogleGmailMonitoringAdapter`` (Watch/History) reuse this
+        adapter's Gmail credential management without duplicating it.
+        """
+        return self._require_valid_credentials()
 
     def _save_credentials(self, credentials: Credentials) -> None:
         # Persist token JSON only — never log this payload.

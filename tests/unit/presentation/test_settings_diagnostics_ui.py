@@ -31,6 +31,46 @@ def test_settings_rendering(main_window: MainWindow) -> None:
         assert marker not in values
 
 
+def test_settings_ai_output_token_limit_save_and_reset(
+    main_window: MainWindow,
+) -> None:
+    main_window.navigate_to("settings")
+    page = main_window._pages["settings"]
+    assert isinstance(page, SettingsView)
+    page.refresh()
+    default = page._ai_output_tokens.value()
+    assert page._reset_ai_output_tokens.isEnabled() is False
+
+    page._ai_output_tokens.setValue(4096)
+    page._on_save_ai_output_tokens()
+
+    assert page._ai_output_tokens.value() == 4096
+    assert page._reset_ai_output_tokens.isEnabled() is True
+    assert "4096" in page._ai_output_tokens_hint.text()
+
+    page._on_reset_ai_output_tokens()
+
+    assert page._ai_output_tokens.value() == default
+    assert page._reset_ai_output_tokens.isEnabled() is False
+
+
+def test_settings_ai_analysis_switch(main_window: MainWindow) -> None:
+    main_window.navigate_to("settings")
+    page = main_window._pages["settings"]
+    assert isinstance(page, SettingsView)
+    page.refresh()
+    assert page._ai_analysis_enabled.isChecked() is True
+
+    page._ai_analysis_enabled.setChecked(False)  # fires the toggle handler
+
+    assert page._ai_analysis_enabled.isChecked() is False
+    assert page._vm._use_cases.get_ai_analysis_enabled.execute() is False
+
+    page._ai_analysis_enabled.setChecked(True)
+
+    assert page._vm._use_cases.get_ai_analysis_enabled.execute() is True
+
+
 def test_diagnostics_rendering_no_secrets(main_window: MainWindow) -> None:
     main_window.navigate_to("diagnostics")
     page = main_window._pages["diagnostics"]

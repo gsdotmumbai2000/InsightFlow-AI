@@ -9,6 +9,7 @@ from insightflow.application.exceptions.gmail import (
     GmailAuthenticationError,
     GmailAuthorizationError,
     GmailConnectionError,
+    GmailMessageNotFoundError,
     GmailRateLimitError,
     GmailReauthenticationRequiredError,
     GmailUnavailableError,
@@ -33,6 +34,10 @@ def raise_translated_google_error(exc: BaseException) -> NoReturn:
     if status_code is None and hasattr(exc, "status_code"):
         status_code = exc.status_code
 
+    if status_code == 404 or "not found" in message:
+        raise GmailMessageNotFoundError(
+            "The requested Gmail message could not be found."
+        ) from exc
     if status_code == 401 or "invalid_grant" in message or "unauthorized" in message:
         raise GmailReauthenticationRequiredError(
             "Gmail credentials are no longer valid. Please connect Gmail again."

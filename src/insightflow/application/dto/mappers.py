@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from insightflow.application.dto.models import (
     AIAnalysisDto,
+    AIProfileDto,
     AttachmentDto,
     IntelligenceEventDto,
     MarketImpactDto,
@@ -15,6 +16,7 @@ from insightflow.application.dto.models import (
 )
 from insightflow.domain import (
     AIAnalysis,
+    AIProfile,
     Attachment,
     IntelligenceEvent,
     MarketImpact,
@@ -52,6 +54,21 @@ def market_impact_to_dto(value: MarketImpact) -> MarketImpactDto:
         affected_assets=value.affected_assets,
         reasoning=value.reasoning,
         confidence=value.confidence.value,
+    )
+
+
+def profile_to_dto(profile: AIProfile) -> AIProfileDto:
+    return AIProfileDto(
+        id=profile.id.value,
+        name=profile.name,
+        description=profile.description,
+        instructions=profile.instructions,
+        version=profile.version,
+        enabled=profile.enabled,
+        output_schema_version=profile.output_schema_version,
+        created_at=profile.created_at,
+        updated_at=profile.updated_at,
+        output_style=profile.output_style.value,
     )
 
 
@@ -114,6 +131,7 @@ def analysis_to_dto(analysis: AIAnalysis) -> AIAnalysisDto:
         failure_reason=analysis.failure_reason,
         created_at=analysis.created_at,
         updated_at=analysis.updated_at,
+        generated_content=analysis.generated_content,
     )
 
 

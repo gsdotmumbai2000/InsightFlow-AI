@@ -1,15 +1,20 @@
-"""Settings page with Gmail connection and label mapping."""
+"""Settings page with Gmail connection, label mapping, and monitoring."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
+
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QVBoxLayout,
     QWidget,
@@ -31,6 +36,22 @@ from insightflow.presentation.widgets.page_helpers import (
 )
 
 
+def _monitoring_status_line(status: str) -> str:
+    """Human-readable status text — clarifies the non-obvious PAUSED case.
+
+    PAUSED means: monitoring was previously started and left in a
+    RUNNING/STARTING state, but this application process currently has no
+    live worker for it (e.g. the app was closed or restarted without
+    clicking "Stop Monitoring" first). It is deliberately distinct from
+    STOPPED (the user explicitly stopped monitoring) — both mean "not
+    currently running," but only PAUSED implies "click Start Monitoring
+    to resume."
+    """
+    if status == "PAUSED":
+        return "PAUSED (not running in this session — click Start Monitoring)"
+    return status
+
+
 class _ConnectWorker(QObject):
     finished_ok = Signal(object)
     finished_err = Signal(str)
@@ -47,6 +68,30 @@ class _ConnectWorker(QObject):
             self.finished_ok.emit(state)
 
 
+class _MonitoringActionWorker(QObject):
+    """Runs one monitoring view-model action off the GUI thread (Phase 10).
+
+    Shared by Authorize/Revoke Pub/Sub, Start/Stop Monitoring, and Renew
+    Watch — each has the identical shape (call a no-arg view-model method,
+    receive a ``SettingsViewState`` back), so one worker parameterized by
+    the action avoids five near-duplicate ``QObject`` subclasses.
+    """
+
+    finished_ok = Signal(object)
+    finished_err = Signal(str)
+
+    def __init__(self, action: Callable[[], SettingsViewState]) -> None:
+        super().__init__()
+        self._action = action
+
+    def run(self) -> None:
+        state = self._action()
+        if state.error_message:
+            self.finished_err.emit(state.error_message)
+        else:
+            self.finished_ok.emit(state)
+
+
 class SettingsView(QWidget):
     def __init__(
         self, view_model: SettingsViewModel, parent: QWidget | None = None
@@ -55,6 +100,8 @@ class SettingsView(QWidget):
         self._vm = view_model
         self._thread: QThread | None = None
         self._worker: _ConnectWorker | None = None
+        self._monitoring_thread: QThread | None = None
+        self._monitoring_worker: _MonitoringActionWorker | None = None
         self.setObjectName("SettingsView")
         self.setAccessibleName("Settings page")
 
@@ -140,6 +187,94 @@ class SettingsView(QWidget):
         self._map_button.clicked.connect(self._on_map)
         layout.addWidget(self._map_button)
 
+        monitoring_title = QLabel("Real-time monitoring")
+        monitoring_title.setObjectName("SectionTitle")
+        layout.addWidget(monitoring_title)
+
+        self._monitoring_status = QLabel()
+        self._monitoring_status.setObjectName("MonitoringStatusLabel")
+        self._monitoring_status.setAccessibleName("Monitoring status")
+        self._monitoring_status.setWordWrap(True)
+        layout.addWidget(self._monitoring_status)
+
+        pubsub_actions = QHBoxLayout()
+        self._authorize_pubsub = QPushButton("Authorize Pub/Sub")
+        self._authorize_pubsub.setAccessibleName("Authorize Pub/Sub access")
+        self._revoke_pubsub = QPushButton("Revoke Pub/Sub")
+        self._revoke_pubsub.setAccessibleName("Revoke Pub/Sub access")
+        self._authorize_pubsub.clicked.connect(self._on_connect_pubsub)
+        self._revoke_pubsub.clicked.connect(self._on_disconnect_pubsub)
+        pubsub_actions.addWidget(self._authorize_pubsub)
+        pubsub_actions.addWidget(self._revoke_pubsub)
+        pubsub_actions.addStretch(1)
+        layout.addLayout(pubsub_actions)
+
+        monitoring_actions = QHBoxLayout()
+        self._start_monitoring = QPushButton("Start Monitoring")
+        self._start_monitoring.setObjectName("PrimaryButton")
+        self._start_monitoring.setAccessibleName("Start Monitoring")
+        self._stop_monitoring = QPushButton("Stop Monitoring")
+        self._stop_monitoring.setAccessibleName("Stop Monitoring")
+        self._renew_watch = QPushButton("Renew Watch")
+        self._renew_watch.setAccessibleName("Renew Gmail watch")
+        self._start_monitoring.clicked.connect(self._on_start_monitoring)
+        self._stop_monitoring.clicked.connect(self._on_stop_monitoring)
+        self._renew_watch.clicked.connect(self._on_renew_watch)
+        monitoring_actions.addWidget(self._start_monitoring)
+        monitoring_actions.addWidget(self._stop_monitoring)
+        monitoring_actions.addWidget(self._renew_watch)
+        monitoring_actions.addStretch(1)
+        layout.addLayout(monitoring_actions)
+
+        ai_title = QLabel("AI analysis")
+        ai_title.setObjectName("SectionTitle")
+        layout.addWidget(ai_title)
+
+        self._ai_analysis_enabled = QCheckBox(
+            "Analyze new emails automatically (turn off to stop AI cost; "
+            "the Analyze button still works)"
+        )
+        self._ai_analysis_enabled.setObjectName("AIAnalysisEnabledCheckbox")
+        self._ai_analysis_enabled.setAccessibleName("Analyze new emails automatically")
+        self._ai_analysis_enabled.toggled.connect(self._on_ai_analysis_toggled)
+        layout.addWidget(self._ai_analysis_enabled)
+
+        ai_row = QHBoxLayout()
+        ai_row.addWidget(QLabel("Max output tokens:"))
+        self._ai_output_tokens = QSpinBox()
+        self._ai_output_tokens.setObjectName("AIOutputTokensInput")
+        self._ai_output_tokens.setAccessibleName("AI max output tokens")
+        self._ai_output_tokens.setSingleStep(256)
+        self._ai_output_tokens.setMinimumWidth(120)
+        ai_row.addWidget(self._ai_output_tokens)
+        self._save_ai_output_tokens = QPushButton("Save")
+        self._save_ai_output_tokens.setAccessibleName("Save AI max output tokens")
+        self._save_ai_output_tokens.clicked.connect(self._on_save_ai_output_tokens)
+        ai_row.addWidget(self._save_ai_output_tokens)
+        self._reset_ai_output_tokens = QPushButton("Reset to default")
+        self._reset_ai_output_tokens.setAccessibleName(
+            "Reset AI max output tokens to default"
+        )
+        self._reset_ai_output_tokens.clicked.connect(self._on_reset_ai_output_tokens)
+        ai_row.addWidget(self._reset_ai_output_tokens)
+        ai_row.addStretch(1)
+        layout.addLayout(ai_row)
+
+        self._ai_output_tokens_hint = QLabel()
+        self._ai_output_tokens_hint.setObjectName("MutedLabel")
+        self._ai_output_tokens_hint.setWordWrap(True)
+        layout.addWidget(self._ai_output_tokens_hint)
+
+        startup_title = QLabel("Background Agent")
+        startup_title.setObjectName("SectionTitle")
+        layout.addWidget(startup_title)
+
+        self._start_with_windows = QCheckBox("Start InsightFlow AI with Windows")
+        self._start_with_windows.setObjectName("StartWithWindowsCheckbox")
+        self._start_with_windows.setAccessibleName("Start InsightFlow AI with Windows")
+        self._start_with_windows.toggled.connect(self._on_start_with_windows_toggled)
+        layout.addWidget(self._start_with_windows)
+
         self._all_labels: list[tuple[str, str]] = []
         self._applying_state = False
 
@@ -170,6 +305,67 @@ class SettingsView(QWidget):
             self._disconnect.setEnabled(not state.busy and connected)
             self._refresh_labels.setEnabled(not state.busy and connected)
             self._map_button.setEnabled(not state.busy and connected)
+
+            self._monitoring_status.setText(
+                f"Status: {_monitoring_status_line(state.monitoring_status)}\n"
+                f"Account: {state.monitoring_account_email}\n"
+                f"Watched topics: {state.monitoring_watched_topics}\n"
+                f"Pub/Sub: {state.monitoring_pubsub_project} / "
+                f"{state.monitoring_pubsub_topic} / "
+                f"{state.monitoring_pubsub_subscription}\n"
+                f"Watch expiration: {state.monitoring_watch_expiration}\n"
+                f"Last sync: {state.monitoring_last_sync}\n"
+                f"Last notification: {state.monitoring_last_notification}\n"
+                f"Last error: {state.monitoring_last_error}"
+            )
+            running = state.monitoring_status in ("STARTING", "RUNNING")
+            self._authorize_pubsub.setEnabled(
+                not state.busy and not state.pubsub_connected
+            )
+            self._revoke_pubsub.setEnabled(
+                not state.busy and state.pubsub_connected and not running
+            )
+            self._start_monitoring.setEnabled(
+                not state.busy and connected and state.pubsub_connected and not running
+            )
+            self._stop_monitoring.setEnabled(not state.busy and running)
+            self._renew_watch.setEnabled(not state.busy and connected and running)
+
+            self._start_with_windows.blockSignals(True)
+            self._start_with_windows.setChecked(state.startup_registered)
+            self._start_with_windows.blockSignals(False)
+            self._start_with_windows.setEnabled(not state.busy)
+
+            self._ai_analysis_enabled.blockSignals(True)
+            self._ai_analysis_enabled.setChecked(state.ai_analysis_enabled is not False)
+            self._ai_analysis_enabled.blockSignals(False)
+            self._ai_analysis_enabled.setEnabled(
+                not state.busy and state.ai_analysis_enabled is not None
+            )
+
+            limit = state.ai_output_tokens
+            self._ai_output_tokens.setEnabled(not state.busy and limit is not None)
+            self._save_ai_output_tokens.setEnabled(not state.busy and limit is not None)
+            self._reset_ai_output_tokens.setEnabled(
+                not state.busy and limit is not None and limit.overridden
+            )
+            if limit is None:
+                self._ai_output_tokens_hint.setText("AI settings are unavailable.")
+            else:
+                self._ai_output_tokens.setRange(limit.minimum, limit.maximum)
+                self._ai_output_tokens.setValue(limit.effective)
+                source = (
+                    "set here"
+                    if limit.overridden
+                    else "default from INSIGHTFLOW_AI_MAX_OUTPUT_TOKENS"
+                )
+                self._ai_output_tokens_hint.setText(
+                    f"Currently {limit.effective} ({source}; default "
+                    f"{limit.configured_default}). The longest reply the AI may "
+                    "write; raise it if analyses fail with 'cut off at the "
+                    "output token limit' — Tamil and other non-English text "
+                    "uses more tokens. Applies to the next analysis, no restart."
+                )
 
             self._all_labels = [(label.label_id, label.name) for label in state.labels]
             self._apply_label_filter(
@@ -290,3 +486,69 @@ class SettingsView(QWidget):
 
     def _on_map(self) -> None:
         self.apply_state(self._vm.map_selected_label_to_topic())
+
+    # -- Real-time monitoring actions (Phase 10) -------------------------
+
+    def _run_monitoring_action(self, action: Callable[[], SettingsViewState]) -> None:
+        if self._monitoring_thread is not None and self._monitoring_thread.isRunning():
+            return
+        self.apply_state(self._vm.set_busy(True))
+        self._monitoring_thread = QThread(self)
+        self._monitoring_worker = _MonitoringActionWorker(action)
+        self._monitoring_worker.moveToThread(self._monitoring_thread)
+        self._monitoring_thread.started.connect(self._monitoring_worker.run)
+        self._monitoring_worker.finished_ok.connect(self._on_monitoring_ok)
+        self._monitoring_worker.finished_err.connect(self._on_monitoring_err)
+        self._monitoring_worker.finished_ok.connect(self._monitoring_thread.quit)
+        self._monitoring_worker.finished_err.connect(self._monitoring_thread.quit)
+        self._monitoring_thread.finished.connect(self._cleanup_monitoring_thread)
+        self._monitoring_thread.start()
+
+    def _on_monitoring_ok(self, state: object) -> None:
+        if isinstance(state, SettingsViewState):
+            self._vm.set_busy(False)
+            self.apply_state(state)
+
+    def _on_monitoring_err(self, message: str) -> None:
+        state = self._vm.set_busy(False)
+        self.apply_state(replace(state, error_message=message))
+
+    def _cleanup_monitoring_thread(self) -> None:
+        self._monitoring_worker = None
+        self._monitoring_thread = None
+
+    def _on_connect_pubsub(self) -> None:
+        self._run_monitoring_action(self._vm.connect_pubsub)
+
+    def _on_disconnect_pubsub(self) -> None:
+        self._run_monitoring_action(self._vm.disconnect_pubsub)
+
+    def _on_start_monitoring(self) -> None:
+        self._run_monitoring_action(self._vm.start_monitoring)
+
+    def _on_stop_monitoring(self) -> None:
+        self._run_monitoring_action(self._vm.stop_monitoring)
+
+    def _on_renew_watch(self) -> None:
+        self._run_monitoring_action(self._vm.renew_watch)
+
+    # -- Windows auto-start (Phase 13) ------------------------------------
+
+    def _on_ai_analysis_toggled(self, checked: bool) -> None:
+        if self._applying_state:
+            return
+        self.apply_state(self._vm.set_ai_analysis_enabled(checked))
+
+    def _on_save_ai_output_tokens(self) -> None:
+        self.apply_state(
+            self._vm.set_ai_output_token_limit(self._ai_output_tokens.value())
+        )
+
+    def _on_reset_ai_output_tokens(self) -> None:
+        self.apply_state(self._vm.set_ai_output_token_limit(None))
+
+    def _on_start_with_windows_toggled(self, checked: bool) -> None:
+        if self._applying_state:
+            return
+        action = self._vm.enable_startup if checked else self._vm.disable_startup
+        self._run_monitoring_action(action)

@@ -14,12 +14,15 @@ from insightflow.configuration.env import (
 )
 from insightflow.configuration.errors import ConfigurationError
 from insightflow.configuration.models import (
+    AISettings,
     AppConfig,
     AppEnvironment,
     ApplicationSettings,
     GmailSettings,
     LoggingSettings,
     LogLevel,
+    NotificationsSettings,
+    PubSubSettings,
     SecretStoreBackend,
     SecuritySettings,
     StorageSettings,
@@ -40,6 +43,32 @@ GMAIL_CLIENT_ID_KEY = "INSIGHTFLOW_GMAIL_CLIENT_ID"
 GMAIL_CLIENT_SECRET_KEY = "INSIGHTFLOW_GMAIL_CLIENT_SECRET"
 GMAIL_CLIENT_SECRETS_FILE_KEY = "INSIGHTFLOW_GMAIL_CLIENT_SECRETS_FILE"
 GMAIL_OAUTH_PORT_KEY = "INSIGHTFLOW_GMAIL_OAUTH_PORT"
+PUBSUB_PROJECT_ID_KEY = "INSIGHTFLOW_GMAIL_PUBSUB_PROJECT_ID"
+PUBSUB_TOPIC_KEY = "INSIGHTFLOW_GMAIL_PUBSUB_TOPIC"
+PUBSUB_SUBSCRIPTION_KEY = "INSIGHTFLOW_GMAIL_PUBSUB_SUBSCRIPTION"
+MONITORING_HISTORY_BATCH_SIZE_KEY = "INSIGHTFLOW_MONITORING_HISTORY_BATCH_SIZE"
+MONITORING_HISTORY_PAGE_SIZE_KEY = "INSIGHTFLOW_MONITORING_HISTORY_PAGE_SIZE"
+MONITORING_FULL_SYNC_MAX_MESSAGES_KEY = "INSIGHTFLOW_MONITORING_FULL_SYNC_MAX_MESSAGES"
+MONITORING_WATCH_RENEWAL_MARGIN_HOURS_KEY = (
+    "INSIGHTFLOW_MONITORING_WATCH_RENEWAL_MARGIN_HOURS"
+)
+MONITORING_PULL_MAX_MESSAGES_KEY = "INSIGHTFLOW_MONITORING_PULL_MAX_MESSAGES"
+MONITORING_IDLE_POLL_SECONDS_KEY = "INSIGHTFLOW_MONITORING_IDLE_POLL_SECONDS"
+AI_ENABLED_KEY = "INSIGHTFLOW_AI_ENABLED"
+AI_AUTOMATIC_ANALYSIS_ENABLED_KEY = "INSIGHTFLOW_AI_AUTOMATIC_ANALYSIS_ENABLED"
+AI_PROVIDER_KEY = "INSIGHTFLOW_AI_PROVIDER"
+AI_REGION_KEY = "INSIGHTFLOW_AI_REGION"
+AI_MODEL_ID_KEY = "INSIGHTFLOW_AI_MODEL_ID"
+AI_TIMEOUT_SECONDS_KEY = "INSIGHTFLOW_AI_TIMEOUT_SECONDS"
+AI_MAX_RETRIES_KEY = "INSIGHTFLOW_AI_MAX_RETRIES"
+AI_MAX_INPUT_CHARS_KEY = "INSIGHTFLOW_AI_MAX_INPUT_CHARS"
+AI_MAX_OUTPUT_TOKENS_KEY = "INSIGHTFLOW_AI_MAX_OUTPUT_TOKENS"
+AI_TEMPERATURE_KEY = "INSIGHTFLOW_AI_TEMPERATURE"
+AI_QUEUE_MAX_SIZE_KEY = "INSIGHTFLOW_AI_QUEUE_MAX_SIZE"
+NOTIFICATIONS_ENABLED_KEY = "INSIGHTFLOW_NOTIFICATIONS_ENABLED"
+
+DEFAULT_AI_PROVIDER = "bedrock"
+DEFAULT_AI_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
@@ -154,6 +183,141 @@ def _parse_gmail_settings(source: EnvironmentSource) -> GmailSettings:
     )
 
 
+def _parse_float(key: str, raw: str, *, minimum: float) -> float:
+    try:
+        value = float(raw.strip())
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"Invalid number for {key}={raw!r}. Expected a decimal number."
+        ) from exc
+    if value < minimum:
+        raise ConfigurationError(
+            f"Invalid number for {key}={raw!r}. Expected a value >= {minimum}."
+        )
+    return value
+
+
+def _parse_pubsub_settings(source: EnvironmentSource) -> PubSubSettings:
+    history_batch_raw = _raw(source, MONITORING_HISTORY_BATCH_SIZE_KEY)
+    history_page_raw = _raw(source, MONITORING_HISTORY_PAGE_SIZE_KEY)
+    full_sync_raw = _raw(source, MONITORING_FULL_SYNC_MAX_MESSAGES_KEY)
+    renewal_margin_raw = _raw(source, MONITORING_WATCH_RENEWAL_MARGIN_HOURS_KEY)
+    pull_max_raw = _raw(source, MONITORING_PULL_MAX_MESSAGES_KEY)
+    idle_poll_raw = _raw(source, MONITORING_IDLE_POLL_SECONDS_KEY)
+    return PubSubSettings(
+        project_id=_raw(source, PUBSUB_PROJECT_ID_KEY),
+        topic=_raw(source, PUBSUB_TOPIC_KEY),
+        subscription=_raw(source, PUBSUB_SUBSCRIPTION_KEY),
+        history_batch_size=(
+            50
+            if history_batch_raw is None
+            else _parse_int(
+                MONITORING_HISTORY_BATCH_SIZE_KEY, history_batch_raw, minimum=1
+            )
+        ),
+        history_page_size=(
+            100
+            if history_page_raw is None
+            else _parse_int(
+                MONITORING_HISTORY_PAGE_SIZE_KEY, history_page_raw, minimum=1
+            )
+        ),
+        full_sync_max_messages=(
+            50
+            if full_sync_raw is None
+            else _parse_int(
+                MONITORING_FULL_SYNC_MAX_MESSAGES_KEY, full_sync_raw, minimum=1
+            )
+        ),
+        watch_renewal_margin_hours=(
+            24.0
+            if renewal_margin_raw is None
+            else _parse_float(
+                MONITORING_WATCH_RENEWAL_MARGIN_HOURS_KEY,
+                renewal_margin_raw,
+                minimum=0.1,
+            )
+        ),
+        pull_max_messages=(
+            10
+            if pull_max_raw is None
+            else _parse_int(MONITORING_PULL_MAX_MESSAGES_KEY, pull_max_raw, minimum=1)
+        ),
+        idle_poll_seconds=(
+            5.0
+            if idle_poll_raw is None
+            else _parse_float(
+                MONITORING_IDLE_POLL_SECONDS_KEY, idle_poll_raw, minimum=1.0
+            )
+        ),
+    )
+
+
+def _parse_ai_settings(source: EnvironmentSource) -> AISettings:
+    enabled_raw = _raw(source, AI_ENABLED_KEY)
+    automatic_raw = _raw(source, AI_AUTOMATIC_ANALYSIS_ENABLED_KEY)
+    timeout_raw = _raw(source, AI_TIMEOUT_SECONDS_KEY)
+    max_retries_raw = _raw(source, AI_MAX_RETRIES_KEY)
+    max_input_chars_raw = _raw(source, AI_MAX_INPUT_CHARS_KEY)
+    max_output_tokens_raw = _raw(source, AI_MAX_OUTPUT_TOKENS_KEY)
+    temperature_raw = _raw(source, AI_TEMPERATURE_KEY)
+    queue_max_size_raw = _raw(source, AI_QUEUE_MAX_SIZE_KEY)
+    return AISettings(
+        enabled=(
+            False if enabled_raw is None else _parse_bool(AI_ENABLED_KEY, enabled_raw)
+        ),
+        automatic_analysis_enabled=(
+            True
+            if automatic_raw is None
+            else _parse_bool(AI_AUTOMATIC_ANALYSIS_ENABLED_KEY, automatic_raw)
+        ),
+        provider=(_raw(source, AI_PROVIDER_KEY) or DEFAULT_AI_PROVIDER).lower(),
+        region=_raw(source, AI_REGION_KEY),
+        model_id=_raw(source, AI_MODEL_ID_KEY) or DEFAULT_AI_MODEL_ID,
+        timeout_seconds=(
+            30.0
+            if timeout_raw is None
+            else _parse_float(AI_TIMEOUT_SECONDS_KEY, timeout_raw, minimum=1.0)
+        ),
+        max_retries=(
+            2
+            if max_retries_raw is None
+            else _parse_int(AI_MAX_RETRIES_KEY, max_retries_raw, minimum=0)
+        ),
+        max_input_chars=(
+            12_000
+            if max_input_chars_raw is None
+            else _parse_int(AI_MAX_INPUT_CHARS_KEY, max_input_chars_raw, minimum=100)
+        ),
+        max_output_tokens=(
+            1024
+            if max_output_tokens_raw is None
+            else _parse_int(AI_MAX_OUTPUT_TOKENS_KEY, max_output_tokens_raw, minimum=64)
+        ),
+        temperature=(
+            0.2
+            if temperature_raw is None
+            else _parse_float(AI_TEMPERATURE_KEY, temperature_raw, minimum=0.0)
+        ),
+        queue_max_size=(
+            100
+            if queue_max_size_raw is None
+            else _parse_int(AI_QUEUE_MAX_SIZE_KEY, queue_max_size_raw, minimum=1)
+        ),
+    )
+
+
+def _parse_notifications_settings(source: EnvironmentSource) -> NotificationsSettings:
+    enabled_raw = _raw(source, NOTIFICATIONS_ENABLED_KEY)
+    return NotificationsSettings(
+        enabled=(
+            True
+            if enabled_raw is None
+            else _parse_bool(NOTIFICATIONS_ENABLED_KEY, enabled_raw)
+        ),
+    )
+
+
 def _parse_optional_path(key: str, raw: str | None) -> Path | None:
     if raw is None:
         return None
@@ -263,4 +427,7 @@ def load_config(
         ),
         security=SecuritySettings(secret_store_backend=secret_backend),
         gmail=_parse_gmail_settings(source),
+        pubsub=_parse_pubsub_settings(source),
+        ai=_parse_ai_settings(source),
+        notifications=_parse_notifications_settings(source),
     )
